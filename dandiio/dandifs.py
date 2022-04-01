@@ -1,6 +1,9 @@
-from fsspec.implementations.http import HTTPFileSystem
+"""
+A `fsspec` File System for (remote) DANDI
+"""
+from fsspec.implementations.http import HTTPFileSystem, HTTPFile, HTTPStreamFile
 from fsspec.utils import stringify_path
-from fsspec.asyn import sync_wrapper
+from fsspec.asyn import sync, sync_wrapper
 from dandi.dandiapi import DandiAPIClient, RemoteDandiset, RemoteAsset
 from dandi.utils import get_instance
 import re
@@ -47,6 +50,7 @@ class RemoteDandiFileSystem(HTTPFileSystem):
                 . the name of a known DANDI instance
                 . the url of a DANDI server
         """
+        kwargs['asynchronous'] = False
         super().__init__(**kwargs)
         if not isinstance(dandiset, RemoteDandiset):
             if not isinstance(client, DandiAPIClient):
@@ -89,7 +93,7 @@ class RemoteDandiFileSystem(HTTPFileSystem):
         instance, dandiset, version, *_ = split_dandi_url(url)
         return cls(dandiset, version, instance)
 
-    async def _walk(self, path, maxdepth=None, **kwargs):
+    def walk(self, path, maxdepth=None, **kwargs):
         """
         Walk through all files under a path.
 
@@ -99,6 +103,7 @@ class RemoteDandiFileSystem(HTTPFileSystem):
 
         Yields: (path, list of dirs, list of files)
         """
+        print(path, kwargs)
         path = stringify_path(path).strip('/')
         detail = kwargs.pop('detail', False)
         assets = kwargs.pop('assets', None)
@@ -112,41 +117,33 @@ class RemoteDandiFileSystem(HTTPFileSystem):
         dirs = {}
         full_dirs = set()
 
-        pattern_file = path + r'/(?P<f>[^/]+)'
-        patter_dir = path + r'/(?P<d>[^/])+/.+'
-
-        depth = len(path.split('/'))
         assets, assets_in = [], assets
         for asset in assets_in:
             asset = getattr(asset, 'path', asset)
+            asset = asset[len(path):].strip('/')
             # is the input path exactly this asset?
-            if asset == path:
-                name = asset.split('/')[-1]
-                files[''] = {'name': name, 'size': None, 'type': 'file'}
+            if not asset:
+                files[''] = {'name': path, 'size': None, 'type': 'file'}
                 continue
-            pathname = asset.rstrip('/')
-            name = pathname.split('/')
-            name = name[min(depth, len(name)-1)]
-            # is this asset a file directly under `path`
-            match = re.fullmatch(pattern_file, asset)
-            if match:
-                name = match.group('f')
+            name = asset.split('/')[0]
+            fullpath = path + '/' + name
+            if '/' not in asset:
+                # this asset is a file directly under `path`
                 files[name] = {
-                    'name': path + '/' + name,
+                    'name': fullpath,
                     'size': None,
                     'type': 'file',
                 }
                 continue
-            # is this asset a file a few levels under `path`?
-            match = re.fullmatch(patter_dir, asset)
-            if match:
+            else:
+                # this asset is a file a few levels under `path`
                 dirs[name] = {
-                    'name': path + '/' + name,
+                    'name': fullpath,
                     'size': None,
                     'type': 'directory',
                 }
-                full_dirs.add(pathname)
-            assets.append(asset)
+                full_dirs.add(fullpath)
+            assets.append(path + '/' + asset)
 
         if detail:
             yield path, dirs, files
@@ -162,25 +159,25 @@ class RemoteDandiFileSystem(HTTPFileSystem):
         kwargs['detail'] = detail
 
         for directory in full_dirs:
-            async for _ in self._walk(directory, **kwargs):
-                yield _
+            yield from self._walk(directory, **kwargs)
 
-    async def _ls(self, path, detail=True, **kwargs):
-        async for path, dirs, files in self._walk(path, detail=detail, maxdepth=1):
+    def ls(self, path, detail=True, **kwargs):
+        print('ls', path)
+        for path, dirs, files in self._walk(path, detail=detail, maxdepth=1):
             if detail:
                 return [*dirs.values(), *files.values()]
             else:
                 return dirs + files
         return []
 
-    ls = sync_wrapper(_ls)
+    # ls = sync_wrapper(_ls)
 
-    async def _glob(self, path, **kwargs):
+    async def glob(self, path, **kwargs):
         dandiset = kwargs.pop('dandiset', None)
         if not dandiset:
             dandiset, path = self.get_dandiset(path)
         self.dandiset, dandiset0 = dandiset, self.dandiset
-        result = await super()._glob(path)
+        result = super().glob(path)
         self.dandiset = dandiset0
         return result
 
@@ -214,12 +211,58 @@ class RemoteDandiFileSystem(HTTPFileSystem):
                              'use relative paths.')
         return dandiset, path
 
-    def open(self, path, *args, **kwargs):
+    def s3_url(self, path):
         dandiset, asset = self.get_dandiset(path)
         if not isinstance(asset, RemoteAsset):
             asset = dandiset.get_asset_by_path(asset)
-        s3_url = _get_s3_url(asset.download_url)
-        return super().open(s3_url, *args, **kwargs)
+        url = asset.download_url
+        url = requests.request(url=url, method='head').url
+        if '?' in url:
+            return url[:url.index('?')]
+        return url
+
+    def _maybe_to_s3(self, url):
+        is_s3 = url.startswith('https://dandiarchive.s3.amazonaws.com')
+        # FIXME: not very generic test
+        if not is_s3:
+            url = self.s3_url(url)
+        return url
+
+    def open(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return super().open(path, *args, **kwargs)
+
+    def cat(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._cat, path, *args, **kwargs)
+
+    def cat_file(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._cat_file, path, *args, **kwargs)
+
+    async def _cat_file(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return await HTTPFileSystem._cat_file(self, path, *args, **kwargs)
+
+    def get(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._get, path, *args, **kwargs)
+
+    def get_file(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._get_file, path, *args, **kwargs)
+
+    def put_file(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._put_file, path, *args, **kwargs)
+
+    def exists(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._exists, path, *args, **kwargs)
+
+    def info(self, path, *args, **kwargs):
+        path = self._maybe_to_s3(path)
+        return sync(self.loop, self._info, path, *args, **kwargs)
 
 
 def split_dandi_url(url):
@@ -300,10 +343,3 @@ def split_dandi_url(url):
         instance = 'https://' + server
 
     return instance, dandiset_id, version, path, asset_id
-
-
-def _get_s3_url(url):
-    url = requests.request(url=url, method='head').url
-    if '?' in url:
-        return url[:url.index('?')]
-    return url
