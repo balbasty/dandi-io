@@ -44,18 +44,17 @@ dtype = np.dtype(ome['ome:Image'][0]['ome:Pixels']['@Type'])
 if dtype.str[0] not in (endian, '|'):
     dtype = endian + dtype.str[1:]
 stain = re.search(r'stain-([^_\.]+)', files[0]).group(1)
-print(stain)
 
 # Generate the TiffSequence and use it to make a zarr store
 # Files are not actually read at that point
 tiffseq = tifffile.TiffSequence(files)
 store = tiffseq.aszarr(
     dtype=dtype,
-    chunkshape=[shape['X'], shape['Y'], shape['Z']],
+    chunkshape=[shape['Z'], shape['Y'], shape['X']],
     fillvalue=0,
     axestiled={0: 1},  # axis 0 of TiffSequence maps to axis 1 of chunks
     zattrs={
-        '_ARRAY_DIMENSIONS': ['X', 'Y', 'Z']
+        '_ARRAY_DIMENSIONS': ['Z', 'Y', 'X']
     },
 )
 
@@ -97,9 +96,11 @@ dataset = xarray.open_dataset(
 )
 print(dataset)
 
-sub = dataset.sel({'X': slice(1024, 2048),
-                   'Y': slice(1024, 2048),
+sub = dataset.sel({'X': slice(None, None, 50),
+                   'Y': slice(None, None, 50),
                    'Z': dataset.dims['Z']//2})
 image = sub[stain]
 xarray.plot.imshow(image, size=6, aspect=1)
 plt.show()
+
+foo = 0
