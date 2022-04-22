@@ -130,9 +130,9 @@ def neuroglancer_listing(start_response, config):
         return d["name"]
     with open(config) as fd:
         tree = json.load(fd)["tree"]
-    for subject in tree:
+    for subject in sorted(tree.keys()):
         result += f"  <li>subject\n    <ul>\n"
-        for sample in tree[subject]:
+        for sample in sorted(tree[subject].keys()):
             result += f"      <li>{sample}\n        <ul>\n"
             stains = sorted(tree[subject][sample].keys())
             # i is a bit pattern where each bit is a stain present or absent
@@ -162,8 +162,9 @@ def neuroglancer_listing(start_response, config):
 
 
 def make_spec(config, subject, sample, stain):
-    key = (subject, sample, stain)
-    if key not in specs:
+    spec_key = (subject, sample, stain)
+    if spec_key not in specs:
+        print(f"Constructing spec for {spec_key}")
         dandiset = config["dandiset"]
         version = config["version"]
         if (dandiset, version) not in rfs:
@@ -180,8 +181,9 @@ def make_spec(config, subject, sample, stain):
                 urls = requests.get(request_url).json()["contentUrl"]
                 url = [_ for _ in urls if ".s3." in _].pop()
             sub_spec_out[key] = [url]
-        specs[key] = sub_spec_out
-    return specs[key]
+        specs[spec_key] = sub_spec_out
+        print(f"Finished constructing spec for {spec_key}")
+    return specs[spec_key]
 
 
 def serve_precomputed(environ, start_response, config_file):
