@@ -225,11 +225,11 @@ if __name__ == "__main__":
 
     url = f"http://{opts.ip_address}:{opts.port}/"
     if opts.proxy:
-        url = f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/{opts.port}"
+        url = f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/{opts.port}/"
     ngv = neuroglancer.Viewer()
     ng_url = ngv.get_viewer_url()
     if opts.proxy:
-        ng_url = ng_url.replace("http://127.0.0.1:", url)
+        ng_url = ng_url.replace("http://127.0.0.1:", f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/")
 
     print(list_one("test", ng_url, url))
     httpd = make_server(opts.ip_address, opts.port, application)
