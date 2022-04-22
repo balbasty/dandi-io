@@ -181,9 +181,8 @@ def make_spec(config, subject, sample, stain):
                 urls = requests.get(request_url).json()["contentUrl"]
                 url = [_ for _ in urls if ".s3." in _].pop()
             sub_spec_out[key] = [url]
-        specs[spec_key] = sub_spec_out
-        print(f"Finished constructing spec for {spec_key}")
-    return specs[spec_key]
+        specs[key] = sub_spec_out
+    return specs[key]
 
 
 def serve_precomputed(environ, start_response, config_file):
