@@ -322,13 +322,7 @@ class ArrayReader(ArrayReaderBase):
         self.url = url
         self.format = format
         self.level = level
-        try:
-            self.info = get_info(url)
-        except:
-            if format == "ngff":
-                self.info = get_ngff_info(url)
-            else:
-                raise
+        self.info = get_ngff_info(url)
         self.scale = self.info.get_scale(level)
 
     @property
