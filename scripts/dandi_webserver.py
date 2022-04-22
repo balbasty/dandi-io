@@ -131,7 +131,7 @@ def neuroglancer_listing(start_response, config):
     with open(config) as fd:
         tree = json.load(fd)["tree"]
     for subject in sorted(tree.keys()):
-        result += f"  <li>subject\n    <ul>\n"
+        result += f"  <li>{subject}\n    <ul>\n"
         for sample in sorted(tree[subject].keys()):
             result += f"      <li>{sample}\n        <ul>\n"
             stains = sorted(tree[subject][sample].keys())
