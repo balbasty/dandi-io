@@ -36,14 +36,20 @@ import math
 import urllib
 from urllib.parse import quote
 
-from dandiio.array import DANDIArrayReader
+import typing
 
+import requests
+
+from dandiio.array import DANDIArrayReader
+from dandiio.dandifs import RemoteDandiFileSystem
 
 class ParseFileException(BaseException):
     pass
 
 
 readers = {}
+specs = {}
+rfs:typing.Dict[typing.Tuple[str, str], RemoteDandiFileSystem] = {}
 
 
 def file_not_found(dest, start_response):
@@ -54,7 +60,7 @@ def file_not_found(dest, start_response):
     return [("<html><body>%s not found</body></html>" % dest).encode("utf-8")]
 
 
-shader_template = """
+cubehelix_template = """
 #uicontrol float brightness slider(min=0.0, max=100.0, default=%f)
 void main() {
     float x = clamp(toNormalized(getDataValue()) * brightness, 0.0, 1.0);
@@ -71,17 +77,49 @@ void main() {
 }
 """
 
+# TODO: make these colorblind-aware
+#       blue is pretty yucky
+#
+red_template = """
+#uicontrol float brightness slider(min=0.0, max=100.0, default=%.2f)
+void main() {
+   emitRGB(vec3(brightness * toNormalized(getDataValue()), 0, 0));
+}
+"""
 
-def list_one(key, ng_url, url):
-    layer = dict(
-        source=f"precomputed://{url}",
-        type="image",
-        shader=shader_template % 40,
-        name=key,
-    )
-    ng_str = json.dumps(dict(layers=[layer]))
+green_template = """
+#uicontrol float brightness slider(min=0.0, max=100.0, default=%.2f)
+void main() {
+   emitRGB(vec3(0, brightness * toNormalized(getDataValue()), 0));
+}
+"""
+
+blue_template = """
+#uicontrol float brightness slider(min=0.0, max=100.0, default=%.2f)
+void main() {
+   emitRGB(vec3(0, 0, brightness * toNormalized(getDataValue())));
+}
+"""
+
+
+def make_url(keys):
+    layers = []
+    if len(keys) == 1:
+        colors = [cubehelix_template]
+    else:
+        colors = [red_template, green_template, blue_template] * ((len(keys) + 2) // 3)
+        colors = colors[:len(keys)]
+
+    for (subject, sample, stain), color in zip(keys, colors):
+        layer = dict(
+            source=f"precomputed://{base_url}{subject}/{sample}/{stain}",
+            type="image",
+            shader=color % 40,
+            name=stain
+        )
+        layers.append(layer)
+    ng_str = json.dumps(dict(layers=layers))
     url = f"{ng_url}#!%s" % quote(ng_str)
-
     return url  # '<li><a href="%s">%s</a></li>' % (url, key)
 
 
@@ -90,9 +128,25 @@ def neuroglancer_listing(start_response, config):
 
     def sort_fn(d):
         return d["name"]
-
-    for d in sorted(config, key=sort_fn):
-        result += list_one(d["name"]) + "\n"
+    with open(config) as fd:
+        tree = json.load(fd)["tree"]
+    for subject in sorted(tree.keys()):
+        result += f"  <li>{subject}\n    <ul>\n"
+        for sample in sorted(tree[subject].keys()):
+            result += f"      <li>{sample}\n        <ul>\n"
+            stains = sorted(tree[subject][sample].keys())
+            # i is a bit pattern where each bit is a stain present or absent
+            # this lets us iterate through all of them.
+            # obviously we want to add html magic to make the list auto expand and such
+            for i in range(1, 2 ** len(stains)):
+                keys = [(subject, sample, stain) for j, stain in enumerate(stains)
+                        if 2 ** j & i]
+                url = make_url(keys)
+                result += f'          <li><a href="{url}">{"+".join([_[2] for _ in keys])}</a></li>\n'
+            result += "        </ul>\n"
+            result += "      </li>\n"
+        result += "     </ul>\n"
+        result += "    </li>\n"
     result += "</ul></body></html>"
     data = result.encode("ascii")
     start_response(
@@ -107,38 +161,65 @@ def neuroglancer_listing(start_response, config):
     return [data]
 
 
+def make_spec(config, subject, sample, stain):
+    spec_key = (subject, sample, stain)
+    if spec_key not in specs:
+        print(f"Constructing spec for {spec_key}")
+        dandiset = config["dandiset"]
+        version = config["version"]
+        if (dandiset, version) not in rfs:
+            rfs[dandiset, version] = RemoteDandiFileSystem(dandiset, version)
+        my_rfs = rfs[dandiset, version]
+        sub_spec_in = config["tree"][subject][sample][stain]
+        sub_spec_out = {}
+        for key, value in sub_spec_in.items():
+            try:
+                # doesn't work sometimes.
+                url = my_rfs.s3_url(value["path"])
+            except:
+                request_url = f"https://api.dandiarchive.org/api/dandisets/{dandiset}/versions/{version}/assets/{value}/"
+                urls = requests.get(request_url).json()["contentUrl"]
+                url = [_ for _ in urls if ".s3." in _].pop()
+            sub_spec_out[key] = [url]
+        specs[spec_key] = sub_spec_out
+    return specs[spec_key]
+
+
 def serve_precomputed(environ, start_response, config_file):
     with open(config_file) as fd:
-        spec = json.load(fd)
+        config = json.load(fd)
+    spec = config["tree"]
     path_info = environ["PATH_INFO"]
     print(f"path: {path_info}")
     if path_info == "/":
-        data = "Nothing here".encode("ascii")
-        start_response(
-            "200 OK",
-            [
-                ("Content-type", "text/html"),
-                ("Content-Length", str(len(data))),
-                ("Access-Control-Allow-Origin", "*"),
-            ],
-        )
-        return [data]
+        data = neuroglancer_listing(start_response, config_file)
+        return data
     elif path_info.startswith("/"):
-        filename = path_info.lstrip("/")
-        print(f"file: {filename}")
+        try:
+            subject, sample, stain, filename = path_info[1:].split("/", 3)
+        except ValueError:
+            return file_not_found(path_info, start_response)
+        print(f"subject: {subject}, sample: {sample}, stain: {stain}, file: {filename}")
+        try:
+            sub_spec = make_spec(config, subject, sample, stain)
+        except ValueError:
+            return file_not_found(path_info, start_response)
         if filename == "info":
-            return serve_info(environ, start_response, spec)
+            return serve_info(environ, start_response, subject, sample, stain, sub_spec)
         else:
             try:
                 level, x0, x1, y0, y1, z0, z1 = parse_filename(filename)
             except ParseFileException:
                 return file_not_found(path_info, start_response)
             print(level, x0, x1, y0, y1, z0, z1)
-            if level not in readers:
-                ar = DANDIArrayReader(spec, level=level)
-                readers[level] = ar
+            reader_key = (subject, sample, stain, level)
+            if reader_key not in readers:
+                ar = DANDIArrayReader(sub_spec, level=level)
+                readers[reader_key] = ar
+                # TODO: implement LRU cache ejection here
             else:
-                ar = readers[level]
+                ar = readers[reader_key]
+                # TODO: update cache entry age here
             img = ar[z0:z1, y0:y1, x0:x1]
             data = img.tobytes()  # tostring("C")
             start_response(
@@ -154,13 +235,14 @@ def serve_precomputed(environ, start_response, config_file):
         return file_not_found(path_info, start_response)
 
 
-def serve_info(environ, start_response, spec):
+def serve_info(environ, start_response, subject, sample, stain, spec):
     level = 1
-    if level not in readers:
+    key = (subject, sample, stain, level)
+    if key not in readers:
         ar = DANDIArrayReader(spec, level=level)
-        readers[level] = ar
+        readers[key] = ar
     else:
-        ar = readers[level]
+        ar = readers[key]
     info = ar.get_info()
     data = json.dumps(info, indent=2, ensure_ascii=True).encode("ascii")
 
@@ -216,21 +298,21 @@ if __name__ == "__main__":
     )
     opts = parser.parse_args(sys.argv[1:])
 
-    def application(environ, start_response):
-        return serve_precomputed(environ, start_response, opts.config_filename)
-
     import os
 
     import neuroglancer
 
-    url = f"http://{opts.ip_address}:{opts.port}/"
+    base_url = f"http://{opts.ip_address}:{opts.port}/"
     if opts.proxy:
-        url = f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/{opts.port}/"
+        base_url = f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/{opts.port}/"
     ngv = neuroglancer.Viewer()
     ng_url = ngv.get_viewer_url()
     if opts.proxy:
         ng_url = ng_url.replace("http://127.0.0.1:", f"https://hub.dandiarchive.org/user/{os.environ['GITHUB_USER']}/proxy/")
 
-    print(list_one("test", ng_url, url))
+    def application(environ, start_response):
+        return serve_precomputed(environ, start_response, opts.config_filename)
+    print(make_url((("MITU01", "125", "LEC"),)))
+    print(base_url)
     httpd = make_server(opts.ip_address, opts.port, application)
     httpd.serve_forever()

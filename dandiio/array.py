@@ -322,13 +322,7 @@ class ArrayReader(ArrayReaderBase):
         self.url = url
         self.format = format
         self.level = level
-        try:
-            self.info = get_info(url)
-        except:
-            if format == "ngff":
-                self.info = get_ngff_info(url)
-            else:
-                raise
+        self.info = get_ngff_info(url)
         self.scale = self.info.get_scale(level)
 
     @property
@@ -383,12 +377,22 @@ class DANDIArrayReader(ArrayReaderBase):
             for idx, axis in enumerate(axes):
                 axes_map[axis["name"]] = idx
             self.offsets.append(
-                (
-                    0,  # offsets_in_vox[axes_map["z"]],
+                [
+                    offsets_in_vox[axes_map["z"]],
                     offsets_in_vox[axes_map["y"]],
                     offsets_in_vox[axes_map["x"]],
-                )
+                ]
             )
+        # Rebase offsets at zero
+        min_z, min_y, min_x = self.offsets[0]
+        for offset in self.offsets[1:]:
+            min_z, min_y, min_x =\
+                [min(a, b) for a, b in zip(offset, (min_z, min_y, min_x))]
+        for offset in self.offsets:
+            offset[0] -= min_z
+            offset[1] -= min_y
+            offset[2] -= min_x
+                 
 
     def get_info(self):
         url = self.urls[0]
