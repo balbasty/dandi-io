@@ -33,7 +33,7 @@ def tadd(tree, key):
 
 
 def get_all_ngffs(dandiset, version):
-    url = f"https://api.dandiarchive.org/api/dandisets/{dandiset}/versions/{version}/assets/?regex=.%2B%5C.ngff"
+    url = f"https://api.dandiarchive.org/api/dandisets/{dandiset}/versions/{version}/assets/?regex=.%2B%5C.ome.zarr"
     answer = requests.get(url).json()
     results = answer["results"]
     while "next" in answer and answer["next"]:
