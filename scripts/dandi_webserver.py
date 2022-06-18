@@ -132,7 +132,7 @@ def neuroglancer_listing(start_response, config):
         tree = json.load(fd)["tree"]
     for subject in sorted(tree.keys()):
         result += f"  <li>{subject}\n    <ul>\n"
-        for sample in sorted(tree[subject].keys()):
+        for sample in sorted(tree[subject].keys(),  key=lambda x: int(x.split('R')[0])):
             result += f"      <li>{sample}\n        <ul>\n"
             stains = sorted(tree[subject][sample].keys())
             # i is a bit pattern where each bit is a stain present or absent
@@ -312,7 +312,6 @@ if __name__ == "__main__":
 
     def application(environ, start_response):
         return serve_precomputed(environ, start_response, opts.config_filename)
-    print(make_url((("MITU01", "125", "LEC"),)))
     print(base_url)
     httpd = make_server(opts.ip_address, opts.port, application)
     httpd.serve_forever()
