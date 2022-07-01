@@ -291,10 +291,16 @@ if __name__ == "__main__":
     parser.add_argument("--port", help="Port to bind to", default=8000, type=int)
     parser.add_argument(
         "--proxy",
-        help="Whether to use hub proxy",
-        action=argparse.BooleanOptionalAction,
+        help="Use hub proxy",
+        action='store_true',
         default=True,
-        type=bool,
+    )
+    parser.add_argument(
+        "--no-proxy",
+        help="Do not use hub proxy",
+        action='store_false',
+        default=True,
+        dest='proxy',
     )
     opts = parser.parse_args(sys.argv[1:])
 
