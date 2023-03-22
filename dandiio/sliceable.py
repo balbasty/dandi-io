@@ -71,7 +71,7 @@ class SliceableArray:
         if self.shape:
             return self.shape[0]
         else:
-            raise TypeError('Scalar objet has no len()')
+            raise TypeError('Scalar object has no len()')
 
     @property
     def _shape(self) -> Tuple[int]:
@@ -82,7 +82,7 @@ class SliceableArray:
 
     @property
     def _dim(self) -> int:
-        """Orginal dimension of the array"""
+        """Original dimension of the array"""
         return len(self._shape)
 
     @property
