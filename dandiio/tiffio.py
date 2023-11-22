@@ -4,7 +4,7 @@ import warnings
 import os
 import fsspec
 import xmlschema
-from typing import Optional, Literal
+from typing import Literal
 import tifffile
 
 
@@ -102,7 +102,7 @@ class _TiffReader:
             ('tag', f'{bo}u2'),
             ('type', f'{bo}u2'),
             ('count', f'{bo}u{self.count_size}'),
-            ('value_or_offset', f'b', self.offset_size),
+            ('value_or_offset', 'b', self.offset_size),
         ])
         buffer = self.file.read(self.entry_size * nb_dir)
         raw_headers = np.frombuffer(buffer, dtype=dir_dtype, count=nb_dir)

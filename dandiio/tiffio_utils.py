@@ -23,15 +23,22 @@ def bo_short(bo):
     return bo
 
 
-rational = lambda bo: np.dtype([
-    ('numerator', f'{bo}u4'),
-    ('denominator', f'{bo}u4'),
-])
-srational = lambda bo: np.dtype([
-    ('numerator', f'{bo}s4'),
-    ('denominator', f'{bo}s4'),
-])
-rational_to_float = lambda x: x['numerator'] / x['denominator']
+def rational(bo):
+    return np.dtype([
+        ('numerator', f'{bo}u4'),
+        ('denominator', f'{bo}u4'),
+    ])
+
+
+def srational(bo):
+    return np.dtype([
+        ('numerator', f'{bo}s4'),
+        ('denominator', f'{bo}s4'),
+    ])
+
+
+def rational_to_float(x):
+    return x['numerator'] / x['denominator']
 
 
 types = {

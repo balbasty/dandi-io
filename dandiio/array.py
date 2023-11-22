@@ -392,7 +392,7 @@ class DANDIArrayReader(ArrayReaderBase):
             offset[0] -= min_z
             offset[1] -= min_y
             offset[2] -= min_x
-                 
+
 
     def get_info(self):
         url = self.urls[0]

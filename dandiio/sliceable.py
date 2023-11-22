@@ -54,7 +54,7 @@ class SliceableArray:
             affine = np.asanyarray(affine)
         self._affine = affine
         if affine is not None and names is None:
-           names = self._default_names()
+            names = self._default_names()
         self._names = tuple(names) if names else None
         self._permutation = tuple(range(self._dim))
         self._slicer = idx.expand_index([Ellipsis], self._shape)
@@ -383,4 +383,3 @@ class ListWrapper:
 class SliceableList(SliceableArray):
     def __init__(self, dat):
         super().__init__(ListWrapper(dat))
-
