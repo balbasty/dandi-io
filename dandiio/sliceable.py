@@ -1,4 +1,8 @@
 """
+Work in progress: wrapper that make contiguous array-like objects
+act like strided ones. It is useful for wrapping basic array readers
+that only know hoe to read contiguous chunks.
+
 A lot of this stuff is ported from https://github.com/balbasty/nitorch
 Specifically:
     - https://github.com/balbasty/nitorch/blob/master/nitorch/io/utils/indexing.py

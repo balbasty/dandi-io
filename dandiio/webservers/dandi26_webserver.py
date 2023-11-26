@@ -182,7 +182,7 @@ def webserver(argv=None):
     parser.add_argument(
         "--ip",
         help="IP address or dns name of interface to bind to",
-        default=DEFAULT_SRV,
+        default=DEFAULT_IP,
     )
     parser.add_argument(
         "--port",
@@ -227,7 +227,7 @@ def webserver(argv=None):
     def application(environ, start_response):
         return serve_precomputed(environ, start_response, opts.config_filename)
 
-    httpd = make_server(opts.ip_address, opts.port, application)
+    httpd = make_server(opts.ip, opts.port, application)
     httpd.serve_forever()
 
 

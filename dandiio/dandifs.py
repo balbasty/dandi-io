@@ -5,7 +5,7 @@ from fsspec.spec import AbstractFileSystem
 from fsspec.implementations.http import HTTPFileSystem
 from fsspec.utils import stringify_path, tokenize
 from dandi.dandiapi import (
-    DandiAPIClient, RemoteDandiset, RemoteAsset, DandiInstance
+    DandiAPIClient, RemoteDandiset, RemoteAsset, DandiInstance, NotFoundError
 )
 from dandi.utils import get_instance
 import re
@@ -73,7 +73,12 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         self._httpfs = HTTPFileSystem(**http_kwargs)
         super().__init__()
         if not isinstance(dandiset, RemoteDandiset):
-            if not isinstance(client, DandiAPIClient):
+            if isinstance(client, str):
+                if not client.startswith('http'):
+                    client = get_instance(client)
+            if isinstance(client, DandiInstance):
+                client = DandiAPIClient.for_dandi_instance(client)
+            else:
                 client = DandiAPIClient(client)
             if dandiset:
                 dandiset = client.get_dandiset(dandiset, version)
@@ -256,7 +261,8 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         if not dandiset:
             dandiset, path = self.get_dandiset(path)
         assets = dandiset.get_assets_by_glob(path, order)
-        return [asset.path for asset in assets]
+        for asset in assets:
+            yield asset.path
 
     def exists(self, path, **kwargs):
         # we override fsspec's default implementation (which uses info)
@@ -265,8 +271,21 @@ class RemoteDandiFileSystem(AbstractFileSystem):
         dandiset = kwargs.pop('dandiset', None)
         if not dandiset:
             dandiset, path = self.get_dandiset(path)
+        try:
+            # check if it is a file
+            dandiset.get_asset_by_path(path)
+            return True
+        except NotFoundError:
+            pass
+        # check if it is a directory
+        if not path.endswith('/'):
+            path = path + '/'
         assets = dandiset.get_assets_with_path_prefix(path)
-        return bool(assets)
+        try:
+            next(assets)
+            return True
+        except StopIteration:
+            return False
 
     def open(self, path, *args, **kwargs):
         path = self._maybe_to_s3(path)

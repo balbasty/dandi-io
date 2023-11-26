@@ -1,11 +1,33 @@
+"""
+This file contains a work-in-progress implementation of a tiff reader.
+
+So far, it cannot read data, but can read metadata (e.g., the embedded
+OME XML metadata)
+
+I am keeping it around for now in the hypothetical case if can be made
+a bit faster than tifffile. For now it is only used to parse OME
+metadata in dandi26, but even there could be replaced by tifffile.
+"""
 from . import tiffio_utils
 import numpy as np
 import warnings
 import os
 import fsspec
 import xmlschema
-from typing import Literal
-import tifffile
+
+try:
+    import tifffile
+except ImportError as e:
+    tifffile = e
+
+
+try:
+    from typing import Literal
+except ImportError:
+    class _Literal:
+        def __getitem__(self, items):
+            return str
+    Literal = _Literal()
 
 
 class _TiffReader:
@@ -25,7 +47,9 @@ class _TiffReader:
             self.is_mine = True
         else:
             if not hasattr(file, 'seek'):
-                raise ValueError('Expected file_like object but got', type(file))
+                raise ValueError(
+                    'Expected file_like object but got', type(file)
+                )
             self.fname = getattr(file, 'name', None)
             self.file = file
             self.is_mine = False
@@ -55,7 +79,9 @@ class _TiffReader:
         elif endian == 'MM':
             endian = 'big'
         else:
-            raise ValueError('Expected "II" or "MM" for endianness but got', endian)
+            raise ValueError(
+                'Expected "II" or "MM" for endianness but got', endian
+            )
         self.endian = endian
         magic = self.int_from_bytes(buffer[2:4])
         if magic == 43:
@@ -132,7 +158,6 @@ class _TiffReader:
                 value = value.tolist()
                 if count == 1:
                     value = value[0]
-            print(tag, value)
             headers[tag] = value
 
         return headers
@@ -160,6 +185,8 @@ class _OMETiffReader(_TiffReader):
 
 def get_ome_xml(file, backend='tifffile'):
     if backend == 'tifffile':
+        if isinstance(tifffile, Exception):
+            raise tifffile
         with tifffile.TiffFile(file) as f:
             ome = f.ome_metadata
         schema = 'http://www.openmicroscopy.org/Schemas/OME/2016-06/ome.xsd'

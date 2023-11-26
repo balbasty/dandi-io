@@ -5,7 +5,9 @@ import json
 import math
 import tifffile
 import numpy as np
+import time
 from .dandifs import RemoteDandiFileSystem
+from .tiffio import get_ome_xml
 
 
 class StitchedLSFM:
@@ -87,42 +89,63 @@ class StitchedLSFM:
     }
 
     def _parse_files(self):
-        fs = RemoteDandiFileSystem.for_url(self.glob)
+        self.fs = RemoteDandiFileSystem.for_url(self.glob)
 
-        # find json files
-        vpaths = fs.glob(self.glob)
-        vpaths = [f for f in vpaths if not f.endswith('.json')]
-        jpaths = []
-        for path in vpaths:
-            jpath = None
-            for _ in range(3):
-                if fs.exists(path + '.json'):
-                    jpath = path + '.json'
-                    break
-                path = '.'.join(path.split('.')[:-1])
-            jpaths.append(jpath)
+        allpaths = self.fs.glob(self.glob)
+        allpaths = filter(lambda x: not x.endswith('.json'), allpaths)
 
-        # read useful metadatas
+        # defaults
         defmat = [[0]*4]*4
         defax = ['X', 'Y', 'Z']
         defpix = [1., 1., 1.]
         defunit = 'mm'
 
+        jpaths = []
+        vpaths = []
         infos = []
-        for vpath, jpath in zip(vpaths, jpaths):
+        toc = time.time()
+        for vpath in allpaths:
+
+            tic = time.time()
+
+            print('parse:', vpath, f'(dandi glob time: {tic - toc})')
+            vpaths.append(vpath)
+
+            # find json
+            jpath = None
+            jpath = vpath
+            for _ in range(3):
+                if self.fs.exists(jpath + '.json'):
+                    jpath = jpath + '.json'
+                    break
+                jpath = '.'.join(jpath.split('.')[:-1])
+            jpaths.append(jpath)
+
+            # ge info from json
             info = {}
             if jpath:
-                with fs.open(jpath) as f:
+                with self.fs.open(jpath) as f:
                     meta = json.load(f)
                 info['shift'] = meta.get('ChunkTransformationMatrix', defmat)
                 info['shift'] = np.asarray(info['shift'])[:3, -1].tolist()
                 info['vx'] = meta.get('PixelSize', defpix)
                 info['unit'] = meta.get('PixelSizeUnits', defunit)
                 info['axes'] = meta.get('ChunkTransformationMatrixAxis', defax)
-            with fs.open(vpath) as f:
-                with tifffile.open(f):
-                    info['shape'] = f.series[0].levels[0].shape[:3]
+
+            # get shape from file
+            with self.fs.open(vpath) as f:
+                ome = get_ome_xml(f, backend='tiffio')
+                info['shape'] = [
+                    ome['ome:Image'][0]['ome:Pixels']['@Size' + axis]
+                    for axis in 'XYZ'
+                ]
+                # with tifffile.TiffFile(f) as ff:
+                #     info['shape'] = ff.series[0].levels[0].shape[:3]
+
             infos.append(info)
+            print(info)
+            toc = time.time()
+            print(f'(tiff parse time: {toc - tic})')
 
         self.vpaths = vpaths
         self.jpaths = jpaths
@@ -136,7 +159,7 @@ class StitchedLSFM:
         mins = np.full([3], np.iinfo('int64').max, dtype='int64')
         maxs = np.full([3], np.iinfo('int64').min, dtype='int64')
         for info in self.infos:
-            cmin = np.asarray(info['shifts'], dtype='int64')
+            cmin = np.asarray(info['shift'], dtype='int64')
             cmax = np.asarray(info['shape'], dtype='int64') + cmin
             mins = np.minimum(cmin,  mins)
             maxs = np.maximum(cmax,  maxs)
@@ -145,6 +168,7 @@ class StitchedLSFM:
         self.mins = mins
         self.maxs = maxs
         self.shape = (maxs - mins).tolist()
+        print('FOV:', mins.tolist(), maxs.tolist(), self.shape)
 
     def _compute_overlap_size(self):
         """Compute average overlap along X and Y"""
@@ -166,8 +190,10 @@ class StitchedLSFM:
                                   info1['max'][1] - info2['min'][1])
                     yoverlap += overlap
                     ycount += 1
-        xoverlap /= xcount
-        yoverlap /= ycount
+        if xcount:
+            xoverlap /= xcount
+        if ycount:
+            yoverlap /= ycount
         self.xoverlap = xoverlap
         self.yoverlap = yoverlap
 
@@ -180,7 +206,7 @@ class StitchedLSFM:
         if len(slicers) > 1:
             if shape is None:
                 shape = self.shape
-            return [self._fix_slicer(slicer, shape=length)
+            return [self._fix_slicer(slicer, length)
                     for slicer, length in zip(slicers, shape)]
         else:
             slicer = slicers[0]
@@ -258,51 +284,58 @@ class StitchedLSFM:
         slicex, slicey, slicez = self.fix_slicers(slicex, slicey, slicez)
         subshape = self.compute_subfov(slicex, slicey, slicez)
 
-        start = [slicex.start, slicey.start, slicez.start]
-        stop = [slicex.stop, slicey.stop, slicez.stop]
-        step = [slicex.step, slicey.step, slicez.step]
+        print(slicex, slicey, slicez, subshape)
+
+        start = np.asarray([slicex.start, slicey.start, slicez.start])
+        stop = np.asarray([slicex.stop, slicey.stop, slicez.stop])
+        step = np.asarray([slicex.step, slicey.step, slicez.step])
 
         voldata = np.zeros(subshape, dtype='float32')
         weights = np.zeros(subshape[:2], dtype='float32')
 
         for vpath, info in zip(self.vpaths, self.infos):
             if not self.isin(info, [slicex, slicey, slicez]):
-                # compute coordinate (in full frame) of the
-                # first and voxels that belong to both the queried
-                # patch and the current tile (cmin), and the first voxel
-                # that does not belong to them (xmax)
-                cmin = np.maximum(info['min'], start) - start
-                cmin = start + (cmin / step).ceil().astype(int) * step
-                cmax = np.minimum(info['max'], stop) - start - 1
-                cmax = 1 + start + (cmax / step).ceil().astype(int) * step
+                print('skip:', vpath)
+                continue
+            print('process:', vpath)
+            # compute coordinate (in full frame) of the
+            # first and voxels that belong to both the queried
+            # patch and the current tile (cmin), and the first voxel
+            # that does not belong to them (xmax)
+            cmin = np.maximum(info['min'], start) - start
+            cmin = start + np.ceil(cmin / step).astype(int) * step
+            cmax = np.minimum(info['max'], stop) - start - 1
+            cmax = 1 + start + np.ceil(cmax / step).astype(int) * step
 
-                # compute cosine weight
-                wgt = self.compute_weights(
-                    info['min'], info['max'], cmin, cmax, step
-                )
+            # compute cosine weight
+            wgt = self.compute_weights(
+                info['min'], info['max'], cmin, cmax, step
+            )
 
-                # compute slicer
-                slicein = [slice(cmin[i].item() - info['min'][i],
-                                 cmax[i].item() - info['min'][i],
-                                 step[i])
-                           for i in range(3)]
-                sliceout = [slice((cmin[i].item() - start[i]) // step[i],
-                                  (cmax[i].item() - start[i]) // step[i] + 1)
-                            for i in range(3)]
+            # compute slicer
+            slicein = [slice(cmin[i].item() - info['min'][i],
+                             cmax[i].item() - info['min'][i],
+                             step[i])
+                       for i in range(3)]
+            sliceout = [slice((cmin[i].item() - start[i]) // step[i],
+                              (cmax[i].item() - start[i] - 1) // step[i] + 1)
+                        for i in range(3)]
 
-                # (partially) read tile and accumulate
-                with RemoteDandiFileSystem.for_url(vpath).open(vpath) as f:
-                    with TiffView(f) as view:
-                        subdat = view[tuple(slicein)]
-                        voldata[tuple(sliceout)] += subdat * wgt[:, :, None]
-                weights += wgt
+            print(f'dat[{sliceout}] = tile[{slicein}]')
+
+            # (partially) read tile and accumulate
+            with self.fs.open(vpath) as f:
+                with TiffView(f) as view:
+                    subdat = view[tuple(slicein)]
+                    voldata[tuple(sliceout)] += subdat * wgt[:, :, None]
+            weights[tuple(sliceout[:2])] += wgt
 
         weights[weights == 0] = 1
         voldata /= weights[:, :, None]
 
         return voldata
 
-    def _getitem__(self, slicer):
+    def __getitem__(self, slicer):
         if not isinstance(slicer, tuple):
             slicer = (slicer,)
         if len(slicer) != 3:
@@ -327,25 +360,25 @@ class TiffView:
         """
         self.fileobj = fileobj
         self.tiff = None
+
+    def __del__(self):
+        self.close()
+
+    def open(self, *args, **kwargs):
+        self.close()
+        self.tiff = tifffile.TiffFile(self.fileobj, *args, **kwargs)
         level = self.tiff.series[0].levels[0]
         self.shape = level.shape
         self.shape_page = level.pages[0].shape
         self.shape_stack = self.shape[:-len(self.shape_page)]
 
-    def __del__(self):
-        getattr(self.tiff, 'close', lambda x: None)()
-
-    def open(self, *args, **kwargs):
-        self.close()
-        self.tiff = tifffile.TiffFile(self.fileobj, *args, **kwargs)
-
     @property
     def closed(self):
-        return getattr(getattr(self.tiff, 'filehandle', 0), 'closed', False)
+        return getattr(getattr(self.tiff, 'filehandle', 0), 'closed', True)
 
     def close(self):
         if not self.closed:
-            getattr(self.tiff, 'close', lambda x: None)()
+            getattr(self.tiff, 'close', lambda: None)()
         self.tiff = None
 
     def __enter__(self):
@@ -362,7 +395,7 @@ class TiffView:
         dat = dat.transpose()           # reorder a X, Y, Z
         return dat
 
-    def _getitem__(self, slicer):
+    def __getitem__(self, slicer):
         if not isinstance(slicer, tuple):
             slicer = (slicer,)
         if len(slicer) != 3:

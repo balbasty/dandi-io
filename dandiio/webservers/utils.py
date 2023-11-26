@@ -11,6 +11,29 @@ def file_not_found(dest, start_response):
     return [("<html><body>%s not found</body></html>" % dest).encode("utf-8")]
 
 
+# Orientation color coding following  Pajevic & Pierpaoli, MRM (1999)
+# We follow the mirror + rotational symmetry convention
+colormap_orient = """
+vec3 colormapOrient(vec3 orient) {
+  vec3 result;
+  result.r = abs(orient[0]);
+  result.g = abs(orient[1]);
+  result.b = abs(orient[2]);
+  return clamp(result, 0.0, 1.0);
+}
+"""
+
+# Runing this in the skeleton shader uses orientation to color tracts
+orient_template = colormap_orient + """
+#uicontrol bool orient_color checkbox(default=false)
+void main() {
+  if (orient_color)
+    emitRGB(colormapOrient(orientation));
+  else
+  	emitDefault();
+}
+"""
+
 cubehelix_template = """
 #uicontrol float brightness slider(min=0.0, max=100.0, default=%f)
 void main() {

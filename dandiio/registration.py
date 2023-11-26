@@ -1,6 +1,15 @@
+"""
+Work in progress: on the fly registration
+
+There's nothing much here yet.
+
+I was building multilevel arrays that could be used for coarse to fine
+registration. I was also trying to understand the coordinate system in
+neuroglancer. There's still a lot to do.
+"""
+
 import numpy as np
 import math
-from . import array
 from .sliceable import SliceableArray
 from . import indexing as idx
 
@@ -41,7 +50,7 @@ class MultiLevelArray(SliceableArray):
                 # assumes neuroglancer coordinates
                 affine = np.asanyarray(affine)
                 affines = [affine]
-                for l in range(1, len(arrays)):
+                for _ in range(1, len(arrays)):
                     affine = np.copy(affine)
                     diag = np.copy(np.diag(affine))
                     affine -= np.diag(diag)
@@ -82,7 +91,7 @@ class MultiLevelArray(SliceableArray):
 
         index = tuple(idx.expand_index(index, self.shape))
         indices = [index]
-        for l in range(1, self.nb_levels):
+        for _ in range(1, self.nb_levels):
 
             old_index = index
             index = []
@@ -109,14 +118,19 @@ class MultiLevelArray(SliceableArray):
                         stop = i.stop
                         step = i.step
                         if step and step < 0:
-                            if start is None:  start = s - 1
-                            if stop is None:  stop = -1
+                            if start is None:
+                                start = s - 1
+                            if stop is None:
+                                stop = -1
                             start = int(math.ceil(start / 2 - 1/4))
                             stop = int(math.ceil(stop / 2 - 1/4))
-                            if stop < 0:  stop = None
+                            if stop < 0:
+                                stop = None
                         else:
-                            if start is None:  start = 0
-                            if stop is None:  stop = s
+                            if start is None:
+                                start = 0
+                            if stop is None:
+                                stop = s
                             start = int(math.floor(start / 2 - 1/4))
                             stop = int(math.floor(stop / 2 - 1/4))
                         i = slice(start, stop, step)
@@ -137,7 +151,7 @@ class MultiLevelArrayKeepSize(MultiLevelArray):
 
         index = tuple(idx.expand_index(index, self.shape))
         indices = [index]
-        for l in range(1, self.nb_levels):
+        for _ in range(1, self.nb_levels):
             old_index = index
             index = []
             names = list(self.names)

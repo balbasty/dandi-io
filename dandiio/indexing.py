@@ -1,3 +1,9 @@
+"""
+Utilities that deal with multi-dimensional indexing
+
+Mostly copied from nitorch.
+"""
+
 import itertools
 import math
 import numpy as np
