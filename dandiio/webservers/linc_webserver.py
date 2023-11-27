@@ -6,19 +6,17 @@ from ..dandifs import RemoteDandiFileSystem
 from ..tracts import TractsTRK
 
 
-DEFAULT_DANDISET = '000026'
-DEFAULT_PREFIX = f'dandi://dandi/{DEFAULT_DANDISET}'
-DEFAULT_NGV = 'https://neuroglancer-demo.appspot.com'
-DEFAULT_IP = '127.0.0.1'
-DEFAULT_PORT = '8000'
-DEFAULT_SRV = f'http://{DEFAULT_IP}:{DEFAULT_PORT}'
+class CONFIG:
+    class DEFAULT:
+        NGV = 'https://neuroglancer-demo.appspot.com'
+        IP = '127.0.0.1'
+        PORT = '8000'
+        SRV = f'http://{IP}:{PORT}'
+    BASE_URL = DEFAULT.SRV
+    NGV_URL = DEFAULT.NGV
+
 
 READERS = {}
-
-
-class CONFIG:
-    BASE_URL = DEFAULT_SRV
-    NGV_URL = DEFAULT_NGV
 
 
 def get_reader(fname):
@@ -148,12 +146,12 @@ def webserver(argv=None):
     parser.add_argument(
         "--ip",
         help="IP address or dns name of interface to bind to",
-        default=DEFAULT_IP,
+        default=CONFIG.DEFAULT.IP,
     )
     parser.add_argument(
         "--port",
         help="Port to bind to",
-        default=DEFAULT_PORT,
+        default=CONFIG.DEFAULT.PORT,
         type=int,
     )
     parser.add_argument(

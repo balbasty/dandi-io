@@ -52,7 +52,7 @@ class TractsTRK:
         self.trkfile = TrkFile.load(self.fileobj, lazy_load=lazy)
 
     def _is_fully_loaded(self):
-        return self.trkfile and isinstance(self.trkfile.streamlines, generator)
+        return self.trkfile and not isinstance(self.trkfile.streamlines, generator)
 
     def __getitem__(self, id):
         if not self._is_fully_loaded():
